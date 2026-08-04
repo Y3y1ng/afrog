@@ -35,6 +35,32 @@ type PocResult struct {
 	BruteRequests  int
 }
 
+func DebugDumpRequestText(pr *PocResult) string {
+	if pr == nil {
+		return "[debug] request dump unavailable: step result is empty."
+	}
+	if pr.ResultRequest == nil {
+		return "[debug] request dump unavailable: request execution failed before the raw request was captured; see the [ERR] log above for details."
+	}
+	if len(pr.ResultRequest.GetRaw()) == 0 {
+		return "[debug] request dump unavailable: raw request is empty; the request may have failed before serialization."
+	}
+	return utils.Str2UTF8(string(pr.ResultRequest.GetRaw()))
+}
+
+func DebugDumpResponseText(pr *PocResult) string {
+	if pr == nil {
+		return "[debug] response dump unavailable: step result is empty."
+	}
+	if pr.ResultResponse == nil {
+		return "[debug] response dump unavailable: no response was captured; the request may have failed before the server returned data."
+	}
+	if len(pr.ResultResponse.GetRaw()) == 0 {
+		return "[debug] response dump unavailable: raw response is empty; the connection may have been reset or closed before data was captured."
+	}
+	return utils.Str2UTF8(string(pr.ResultResponse.GetRaw()))
+}
+
 func (r *Result) Snapshot() *Result {
 	if r == nil {
 		return nil
@@ -177,10 +203,10 @@ func (r *Result) Debug() {
 	for k, v := range r.AllPocResult {
 		k++
 		gologger.Info().Msgf("\r\n[%d][%s] Dumped Request\n", k, r.PocInfo.Id)
-		gologger.Print().Msgf("%s\n", v.ResultRequest.GetRaw())
+		gologger.Print().Msgf("%s\n", DebugDumpRequestText(v))
 
 		gologger.Info().Msgf("\r\n[%d][%s] Dumped Response\n", k, r.PocInfo.Id)
-		gologger.Print().Msgf("%s\n", utils.Str2UTF8(string(v.ResultResponse.GetRaw())))
+		gologger.Print().Msgf("%s\n", DebugDumpResponseText(v))
 	}
 
 }
