@@ -356,6 +356,89 @@ func persistHit(taskID string, r *result.Result) error {
 	return err
 }
 
+// buildScanSDKOptions maps the web request to SDK options.
+//
+// The SDK treats WithPocPaths as additive and WithPocPathsOnly as the explicit
+// switch to "scan only these PoCs". The web layer keeps builtin PoCs in scope
+// by default, and only enters exclusive mode when the request clearly selects
+// an explicit PoC set.
+func buildScanSDKOptions(req ScanCreateRequest, targets []string, taskID string, pocPath string, appendPocs []string, useIDs bool) []sdk.Option {
+	sdkOpts := []sdk.Option{
+		sdk.WithTargets(targets...),
+		// Persist the engine-level result so that the stored request and
+		// response keep the exact shape the reports and UI expect.
+		sdk.WithRawResultHandler(func(r *result.Result) {
+			_ = persistHit(taskID, r)
+		}),
+	}
+
+	if v := strings.TrimSpace(pocPath); v != "" {
+		sdkOpts = append(sdkOpts, sdk.WithPocPaths(v))
+	}
+	if len(appendPocs) > 0 {
+		sdkOpts = append(sdkOpts, sdk.WithPocPaths(appendPocs...))
+	}
+
+	exclusivePocs := useIDs || strings.TrimSpace(pocPath) != ""
+	switch strings.ToLower(strings.TrimSpace(req.PocSource)) {
+	case "curated", "my":
+		// A single-source selection means "scan only this source" rather than
+		// "append this source to builtin".
+		exclusivePocs = true
+	}
+	if exclusivePocs {
+		sdkOpts = append(sdkOpts, sdk.WithPocPathsOnly())
+	}
+
+	if !useIDs {
+		sdkOpts = append(sdkOpts,
+			sdk.WithSearch(strings.TrimSpace(req.Search)),
+			sdk.WithSeverity(strings.TrimSpace(req.Severity)),
+		)
+	}
+	if req.Concurrency > 0 {
+		sdkOpts = append(sdkOpts, sdk.WithConcurrency(req.Concurrency))
+	}
+	if req.RateLimit > 0 {
+		sdkOpts = append(sdkOpts, sdk.WithRateLimit(req.RateLimit))
+	}
+	if req.Timeout > 0 {
+		sdkOpts = append(sdkOpts, sdk.WithTimeout(req.Timeout))
+	}
+	if req.Retries > 0 {
+		sdkOpts = append(sdkOpts, sdk.WithRetries(req.Retries))
+	}
+	if req.MaxHostError > 0 {
+		sdkOpts = append(sdkOpts, sdk.WithMaxHostError(req.MaxHostError))
+	}
+	if v := strings.TrimSpace(req.Proxy); v != "" {
+		sdkOpts = append(sdkOpts, sdk.WithProxy(v))
+	}
+	if req.Smart {
+		sdkOpts = append(sdkOpts, sdk.WithSmartConcurrency())
+	}
+	if req.EnableOOB {
+		sdkOpts = append(sdkOpts, sdk.WithOOB(sdk.OOBOptions{
+			Adapter: strings.TrimSpace(req.OOB),
+			Key:     strings.TrimSpace(req.OOBKey),
+			Domain:  strings.TrimSpace(req.OOBDomain),
+			ApiURL:  strings.TrimSpace(req.OOBApiUrl),
+			HttpURL: strings.TrimSpace(req.OOBHttpUrl),
+		}))
+	}
+	if req.PortScan || req.PortScanCompat {
+		sdkOpts = append(sdkOpts, sdk.WithPortScan(sdk.PortScanOptions{
+			Ports:         strings.TrimSpace(req.Ports),
+			SkipDiscovery: req.SkipHostDisc,
+		}))
+	}
+	if req.WebProbe || req.WebFingerprint {
+		sdkOpts = append(sdkOpts, sdk.WithWebProbe())
+	}
+
+	return sdkOpts
+}
+
 func scansCreateHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
@@ -449,64 +532,7 @@ func scansCreateHandler(w http.ResponseWriter, r *http.Request) {
 
 	taskID := nextTaskID(getTaskManager())
 
-	sdkOpts := []sdk.Option{
-		sdk.WithTargets(targets...),
-		sdk.WithPocPaths(pocPath),
-		sdk.WithPocPathsOnly(),
-		// Persist the engine-level result so that the stored request and
-		// response keep the exact shape the reports and UI expect.
-		sdk.WithRawResultHandler(func(r *result.Result) {
-			_ = persistHit(taskID, r)
-		}),
-	}
-	if len(appendPocs) > 0 {
-		sdkOpts = append(sdkOpts, sdk.WithPocPaths(appendPocs...))
-	}
-	if !useIDs {
-		sdkOpts = append(sdkOpts,
-			sdk.WithSearch(strings.TrimSpace(req.Search)),
-			sdk.WithSeverity(strings.TrimSpace(req.Severity)),
-		)
-	}
-	if req.Concurrency > 0 {
-		sdkOpts = append(sdkOpts, sdk.WithConcurrency(req.Concurrency))
-	}
-	if req.RateLimit > 0 {
-		sdkOpts = append(sdkOpts, sdk.WithRateLimit(req.RateLimit))
-	}
-	if req.Timeout > 0 {
-		sdkOpts = append(sdkOpts, sdk.WithTimeout(req.Timeout))
-	}
-	if req.Retries > 0 {
-		sdkOpts = append(sdkOpts, sdk.WithRetries(req.Retries))
-	}
-	if req.MaxHostError > 0 {
-		sdkOpts = append(sdkOpts, sdk.WithMaxHostError(req.MaxHostError))
-	}
-	if v := strings.TrimSpace(req.Proxy); v != "" {
-		sdkOpts = append(sdkOpts, sdk.WithProxy(v))
-	}
-	if req.Smart {
-		sdkOpts = append(sdkOpts, sdk.WithSmartConcurrency())
-	}
-	if req.EnableOOB {
-		sdkOpts = append(sdkOpts, sdk.WithOOB(sdk.OOBOptions{
-			Adapter: strings.TrimSpace(req.OOB),
-			Key:     strings.TrimSpace(req.OOBKey),
-			Domain:  strings.TrimSpace(req.OOBDomain),
-			ApiURL:  strings.TrimSpace(req.OOBApiUrl),
-			HttpURL: strings.TrimSpace(req.OOBHttpUrl),
-		}))
-	}
-	if req.PortScan || req.PortScanCompat {
-		sdkOpts = append(sdkOpts, sdk.WithPortScan(sdk.PortScanOptions{
-			Ports:         strings.TrimSpace(req.Ports),
-			SkipDiscovery: req.SkipHostDisc,
-		}))
-	}
-	if req.WebProbe || req.WebFingerprint {
-		sdkOpts = append(sdkOpts, sdk.WithWebProbe())
-	}
+	sdkOpts := buildScanSDKOptions(req, targets, taskID, pocPath, appendPocs, useIDs)
 
 	scanner, err := sdk.New(context.Background(), sdkOpts...)
 	if err != nil {

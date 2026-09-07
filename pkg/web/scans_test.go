@@ -4,6 +4,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/zan8in/afrog/v3/pkg/sdk"
 )
 
 // Cancelling a scan reaches finalizeTask from two directions at once: the stop
@@ -94,4 +96,59 @@ func TestTask_ConcurrentFieldAccessIsRaceFree(t *testing.T) {
 		t.Fatal("concurrent task field access deadlocked")
 	}
 	removeSubscriber(task, sub)
+}
+
+func TestBuildScanSDKOptions_PocScopeMatchesSDKSemantics(t *testing.T) {
+	apply := func(opts []sdk.Option) *sdk.Options {
+		t.Helper()
+		o := sdk.NewOptions()
+		for _, opt := range opts {
+			if err := opt(o); err != nil {
+				t.Fatalf("apply option: %v", err)
+			}
+		}
+		return o
+	}
+
+	t.Run("default web scan keeps builtin pocs", func(t *testing.T) {
+		o := apply(buildScanSDKOptions(
+			ScanCreateRequest{},
+			[]string{"https://example.com"},
+			"task-default",
+			"",
+			[]string{"/tmp/pocs-curated", "/tmp/pocs-my"},
+			false,
+		))
+		if o.PocPathsOnly {
+			t.Fatal("default web scan should not enable PocPathsOnly")
+		}
+	})
+
+	t.Run("explicit poc file is exclusive", func(t *testing.T) {
+		o := apply(buildScanSDKOptions(
+			ScanCreateRequest{},
+			[]string{"https://example.com"},
+			"task-file",
+			"/tmp/custom.yaml",
+			nil,
+			false,
+		))
+		if !o.PocPathsOnly {
+			t.Fatal("poc_file should enable PocPathsOnly")
+		}
+	})
+
+	t.Run("explicit source is exclusive", func(t *testing.T) {
+		o := apply(buildScanSDKOptions(
+			ScanCreateRequest{PocSource: "my"},
+			[]string{"https://example.com"},
+			"task-source",
+			"",
+			[]string{"/tmp/pocs-my"},
+			false,
+		))
+		if !o.PocPathsOnly {
+			t.Fatal("single-source scan should enable PocPathsOnly")
+		}
+	})
 }
