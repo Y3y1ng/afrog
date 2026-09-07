@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/zan8in/afrog/v3/pkg/result"
 
 	"github.com/google/cel-go/checker/decls"
+	"github.com/google/cel-go/common/types/ref"
 	"github.com/zan8in/afrog/v3/pkg/poc"
 	"github.com/zan8in/afrog/v3/pkg/proto"
 	"github.com/zan8in/afrog/v3/pkg/utils"
@@ -264,7 +266,7 @@ func (c *Checker) Check(target string, pocItem *poc.Poc) (err error) {
 
 		isMatch := false
 		baseReq := cloneRuleRequest(rule.Request)
-		bruteCfg, bruteVars, bruteOrder := parseBrute(rule.Brute)
+		bruteCfg, bruteVars, bruteOrder := parseBrute(rule.Brute, c.VariableMap, c.CustomLib)
 		bruteTruncated := false
 		bruteRequests := 0
 
@@ -572,7 +574,7 @@ func restoreVars(variableMap map[string]any, snapshot map[string]savedVar) {
 	}
 }
 
-func parseBrute(brute yaml.MapSlice) (bruteConfig, map[string][]string, []string) {
+func parseBrute(brute yaml.MapSlice, variableMap map[string]any, lib *CustomLib) (bruteConfig, map[string][]string, []string) {
 	cfg := bruteConfig{Mode: "clusterbomb", Commit: "winner"}
 	vars := map[string][]string{}
 	order := make([]string, 0, len(brute))
@@ -613,6 +615,22 @@ func parseBrute(brute yaml.MapSlice) (bruteConfig, map[string][]string, []string
 				b, _ := strconv.ParseBool(strings.TrimSpace(v))
 				cfg.Continue = b
 				continue
+			}
+			if lib == nil {
+				continue
+			}
+			out, err := lib.RunEval(v, variableMap)
+			if err != nil {
+				continue
+			}
+			if list, ok := celStringSlice(out); ok && len(list) > 0 {
+				vars[key] = append([]string(nil), list...)
+				order = append(order, key)
+				continue
+			}
+			if value, ok := out.Value().(string); ok && strings.TrimSpace(value) != "" {
+				vars[key] = []string{value}
+				order = append(order, key)
 			}
 		case []any:
 			list := make([]string, 0, len(v))
@@ -806,6 +824,94 @@ func shouldCountHostError(err error) bool {
 	return false
 }
 
+var (
+	nativeStringSliceType          = reflect.TypeOf([]string{})
+	nativeStringStringMapType      = reflect.TypeOf(map[string]string{})
+	nativeStringStringSliceMapType = reflect.TypeOf(map[string][]string{})
+)
+
+func celStringSlice(v ref.Val) ([]string, bool) {
+	native, err := v.ConvertToNative(nativeStringSliceType)
+	if err != nil {
+		return nil, false
+	}
+	out, ok := native.([]string)
+	return out, ok
+}
+
+func celStringStringMap(v ref.Val) (map[string]string, bool) {
+	native, err := v.ConvertToNative(nativeStringStringMapType)
+	if err != nil {
+		return nil, false
+	}
+	out, ok := native.(map[string]string)
+	return out, ok
+}
+
+func celStringStringSliceMap(v ref.Val) (map[string][]string, bool) {
+	native, err := v.ConvertToNative(nativeStringStringSliceMapType)
+	if err != nil {
+		return nil, false
+	}
+	out, ok := native.(map[string][]string)
+	return out, ok
+}
+
+func (c *Checker) setVariableValue(key string, value any) {
+	switch v := value.(type) {
+	case *proto.UrlType:
+		c.VariableMap[key] = utils.UrlTypeToString(v)
+		c.CustomLib.UpdateCompileOption(key, decls.NewObjectType("proto.UrlType"))
+	case int:
+		c.VariableMap[key] = v
+		c.CustomLib.UpdateCompileOption(key, decls.Int)
+	case int64:
+		c.VariableMap[key] = int(v)
+		c.CustomLib.UpdateCompileOption(key, decls.Int)
+	case float64:
+		c.VariableMap[key] = v
+		c.CustomLib.UpdateCompileOption(key, decls.Double)
+	case bool:
+		c.VariableMap[key] = v
+		c.CustomLib.UpdateCompileOption(key, decls.Bool)
+	case []string:
+		c.VariableMap[key] = append([]string(nil), v...)
+		c.CustomLib.UpdateCompileOption(key, StrListType)
+	case map[string]string:
+		c.VariableMap[key] = v
+		c.CustomLib.UpdateCompileOption(key, StrStrMapType)
+	case map[string][]string:
+		cloned := make(map[string][]string, len(v))
+		for mk, mv := range v {
+			cloned[mk] = append([]string(nil), mv...)
+		}
+		c.VariableMap[key] = cloned
+		c.CustomLib.UpdateCompileOption(key, StrStrListMapType)
+	case string:
+		c.VariableMap[key] = v
+		c.CustomLib.UpdateCompileOption(key, decls.String)
+	default:
+		c.VariableMap[key] = fmt.Sprintf("%v", v)
+		c.CustomLib.UpdateCompileOption(key, decls.String)
+	}
+}
+
+func (c *Checker) setVariableFromEval(key string, out ref.Val) {
+	if value, ok := celStringStringSliceMap(out); ok {
+		c.setVariableValue(key, value)
+		return
+	}
+	if value, ok := celStringStringMap(out); ok {
+		c.setVariableValue(key, value)
+		return
+	}
+	if value, ok := celStringSlice(out); ok {
+		c.setVariableValue(key, value)
+		return
+	}
+	c.setVariableValue(key, out.Value())
+}
+
 func (c *Checker) UpdateVariableMap(args yaml.MapSlice) {
 	for _, item := range args {
 		key := item.Key.(string)
@@ -817,45 +923,35 @@ func (c *Checker) UpdateVariableMap(args yaml.MapSlice) {
 			out, err := c.CustomLib.RunEval(v, c.VariableMap)
 			if err != nil {
 				// fixed set string failed bug
-				c.VariableMap[key] = fmt.Sprintf("%v", v)
-				c.CustomLib.UpdateCompileOption(key, decls.String)
+				c.setVariableValue(key, v)
 				continue
 			}
-			switch value := out.Value().(type) {
-			case *proto.UrlType:
-				c.VariableMap[key] = utils.UrlTypeToString(value)
-				c.CustomLib.UpdateCompileOption(key, decls.NewObjectType("proto.UrlType"))
-			case int64:
-				c.VariableMap[key] = int(value)
-				c.CustomLib.UpdateCompileOption(key, decls.Int)
-			case map[string]string:
-				c.VariableMap[key] = value
-				c.CustomLib.UpdateCompileOption(key, StrStrMapType)
-			default:
-				c.VariableMap[key] = fmt.Sprintf("%v", out)
-				c.CustomLib.UpdateCompileOption(key, decls.String)
-			}
+			c.setVariableFromEval(key, out)
 
 		case int:
-			c.VariableMap[key] = v
-			c.CustomLib.UpdateCompileOption(key, decls.Int)
+			c.setVariableValue(key, v)
 			continue
 		case int64:
-			c.VariableMap[key] = int(v)
-			c.CustomLib.UpdateCompileOption(key, decls.Int)
+			c.setVariableValue(key, v)
 			continue
 		case float64:
-			c.VariableMap[key] = v
-			c.CustomLib.UpdateCompileOption(key, decls.Double)
+			c.setVariableValue(key, v)
 			continue
 		case bool:
-			c.VariableMap[key] = v
-			c.CustomLib.UpdateCompileOption(key, decls.Bool)
+			c.setVariableValue(key, v)
+			continue
+		case []string:
+			c.setVariableValue(key, v)
+			continue
+		case map[string]string:
+			c.setVariableValue(key, v)
+			continue
+		case map[string][]string:
+			c.setVariableValue(key, v)
 			continue
 		default:
 			// 其他类型统一按字符串存（保证兼容）
-			c.VariableMap[key] = fmt.Sprintf("%v", v)
-			c.CustomLib.UpdateCompileOption(key, decls.String)
+			c.setVariableValue(key, v)
 			continue
 		}
 	}
@@ -885,16 +981,8 @@ func (c *Checker) UpdateVariableMapExtractor(extractors []poc.Extractors) {
 				continue
 			}
 
-			switch value := out.Value().(type) {
-			case map[string]string:
-				c.VariableMap[key] = value
-				c.CustomLib.UpdateCompileOption(key, StrStrMapType)
-				c.Result.Extractor = append(c.Result.Extractor, yaml.MapItem{Key: key, Value: value})
-			case string:
-				c.VariableMap[key] = value
-				c.CustomLib.UpdateCompileOption(key, decls.String)
-				c.Result.Extractor = append(c.Result.Extractor, yaml.MapItem{Key: key, Value: value})
-			}
+			c.setVariableFromEval(key, out)
+			c.Result.Extractor = append(c.Result.Extractor, yaml.MapItem{Key: key, Value: c.VariableMap[key]})
 
 		}
 	}

@@ -40,6 +40,42 @@ func escapeVBString(s string) string {
 	return strings.ReplaceAll(s, `"`, `""`)
 }
 
+func regexNamedSubmatchFirst(expr string, raw string) map[string]string {
+	result := make(map[string]string)
+	re := regexp2.MustCompile(expr, regexp2.RE2)
+	m, _ := re.FindStringMatch(raw)
+	if m == nil {
+		return result
+	}
+	for n, gp := range m.Groups() {
+		if n == 0 || gp.Name == "" {
+			continue
+		}
+		result[gp.Name] = gp.String()
+	}
+	return result
+}
+
+func regexNamedSubmatchAll(expr string, raw string) map[string][]string {
+	result := make(map[string][]string)
+	re := regexp2.MustCompile(expr, regexp2.RE2)
+	m, _ := re.FindStringMatch(raw)
+	for m != nil {
+		for n, gp := range m.Groups() {
+			if n == 0 || gp.Name == "" {
+				continue
+			}
+			result[gp.Name] = append(result[gp.Name], gp.String())
+		}
+		next, err := re.FindNextMatch(m)
+		if err != nil {
+			break
+		}
+		m = next
+	}
+	return result
+}
+
 func jspDeletePayload(marker string) string {
 	return fmt.Sprintf(`<%%out.println("%s");new java.io.File(application.getRealPath(request.getServletPath())).delete();%%>`, escapeJSPString(marker))
 }
@@ -1228,10 +1264,6 @@ func ReadProgramOptions(reg ref.TypeRegistry) []cel.ProgramOption {
 			&functions.Overload{
 				Operator: "string_submatch_string",
 				Binary: func(lhs ref.Val, rhs ref.Val) ref.Val {
-					var (
-						resultMap = make(map[string]string)
-					)
-
 					v1, ok := lhs.(types.String)
 					if !ok {
 						return types.ValOrErr(lhs, "unexpected type '%v' passed to submatch", lhs.Type())
@@ -1258,27 +1290,27 @@ func ReadProgramOptions(reg ref.TypeRegistry) []cel.ProgramOption {
 					// 	resultMap[k] = strings.TrimSuffix(v, ";")
 					// }
 
-					re := regexp2.MustCompile(string(v1), regexp2.RE2)
-					if m, _ := re.FindStringMatch(string(v2)); m != nil {
-						gps := m.Groups()
-						for n, gp := range gps {
-							if n == 0 {
-								continue
-							}
-							resultMap[gp.Name] = gp.String()
-						}
+					return types.NewStringStringMap(reg, regexNamedSubmatchFirst(string(v1), string(v2)))
+				},
+			},
+			&functions.Overload{
+				Operator: "string_submatchall_string",
+				Binary: func(lhs ref.Val, rhs ref.Val) ref.Val {
+					v1, ok := lhs.(types.String)
+					if !ok {
+						return types.ValOrErr(lhs, "unexpected type '%v' passed to submatchall", lhs.Type())
+					}
+					v2, ok := rhs.(types.String)
+					if !ok {
+						return types.ValOrErr(rhs, "unexpected type '%v' passed to submatchall", rhs.Type())
 					}
 
-					return types.NewStringStringMap(reg, resultMap)
+					return reg.NativeToValue(regexNamedSubmatchAll(string(v1), string(v2)))
 				},
 			},
 			&functions.Overload{
 				Operator: "string_bsubmatch_bytes",
 				Binary: func(lhs ref.Val, rhs ref.Val) ref.Val {
-					var (
-						resultMap = make(map[string]string)
-					)
-
 					v1, ok := lhs.(types.String)
 					if !ok {
 						return types.ValOrErr(lhs, "unexpected type '%v' passed to bsubmatch", lhs.Type())
@@ -1306,21 +1338,22 @@ func ReadProgramOptions(reg ref.TypeRegistry) []cel.ProgramOption {
 					// 	resultMap[k] = strings.TrimSuffix(v, ";")
 					// }
 
-					re := regexp2.MustCompile(string(v1), regexp2.RE2)
-					raw := string([]byte(v2))
-					m, _ := re.FindStringMatch(raw)
-
-					if m != nil {
-						gps := m.Groups()
-						for n, gp := range gps {
-							if n == 0 {
-								continue
-							}
-							resultMap[gp.Name] = gp.String()
-						}
+					return types.NewStringStringMap(reg, regexNamedSubmatchFirst(string(v1), string([]byte(v2))))
+				},
+			},
+			&functions.Overload{
+				Operator: "string_bsubmatchall_bytes",
+				Binary: func(lhs ref.Val, rhs ref.Val) ref.Val {
+					v1, ok := lhs.(types.String)
+					if !ok {
+						return types.ValOrErr(lhs, "unexpected type '%v' passed to bsubmatchall", lhs.Type())
+					}
+					v2, ok := rhs.(types.Bytes)
+					if !ok {
+						return types.ValOrErr(rhs, "unexpected type '%v' passed to bsubmatchall", rhs.Type())
 					}
 
-					return types.NewStringStringMap(reg, resultMap)
+					return reg.NativeToValue(regexNamedSubmatchAll(string(v1), string([]byte(v2))))
 				},
 			},
 		),

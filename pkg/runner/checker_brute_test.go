@@ -117,6 +117,113 @@ expression: r0()
 	}
 }
 
+func TestHTTPBruteUsesDynamicListFromOutput(t *testing.T) {
+	retryhttpclient.Init(&retryhttpclient.Options{
+		Proxy:           "",
+		Timeout:         5,
+		Retries:         0,
+		MaxRespBodySize: 2,
+	})
+
+	var mu sync.Mutex
+	seen := make([]string, 0, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/templates":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"11"},{"id":"22"},{"id":"33"}`))
+		case "/check":
+			id := r.URL.Query().Get("id")
+			mu.Lock()
+			seen = append(seen, id)
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			if id == "22" {
+				_, _ = w.Write([]byte("WIN"))
+				return
+			}
+			_, _ = w.Write([]byte("NO"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	var pocYAML = []byte(`
+id: brute-dynamic-output
+info:
+  name: brute-dynamic-output
+  author: test
+  severity: info
+rules:
+  r0:
+    request:
+      method: GET
+      path: /templates
+    expression: response.status == 200
+    output:
+      ids: '"\"id\":\"(?P<tid>[0-9]+)\"".bsubmatchall(response.body)'
+  r1:
+    brute:
+      mode: clusterbomb
+      commit: winner
+      continue: false
+      template_id: ids["tid"]
+    request:
+      method: GET
+      path: /check?id={{template_id}}
+    expression: response.status == 200 && response.body.bcontains(b"WIN")
+expression: r0() && r1()
+`)
+
+	pocItem := &poc.Poc{}
+	if err := yaml.Unmarshal(pocYAML, pocItem); err != nil {
+		t.Fatalf("unmarshal poc yaml: %v", err)
+	}
+
+	opt := &config.Options{
+		Timeout:         5,
+		Retries:         0,
+		MaxRespBodySize: 2,
+		MaxHostError:    3,
+	}
+	opt.Targets.Append(srv.URL)
+	opt.Targets.SetNum(srv.URL, ActiveTarget)
+
+	c := &Checker{
+		Options:     opt,
+		VariableMap: map[string]any{},
+		Result:      &result.Result{},
+		CustomLib:   NewCustomLib(),
+	}
+
+	if err := c.Check(srv.URL, pocItem); err != nil {
+		t.Fatalf("checker check error: %v", err)
+	}
+	if !c.Result.IsVul {
+		t.Fatalf("expected IsVul=true, got false")
+	}
+
+	if got, ok := c.VariableMap["template_id"].(string); !ok || got != "22" {
+		t.Fatalf("expected template_id=22, got %#v", c.VariableMap["template_id"])
+	}
+	ids, ok := c.VariableMap["ids"].(map[string][]string)
+	if !ok {
+		t.Fatalf("expected ids map[string][]string, got %#v", c.VariableMap["ids"])
+	}
+	if got := ids["tid"]; len(got) != 3 || got[0] != "11" || got[1] != "22" || got[2] != "33" {
+		t.Fatalf("expected ids tid [11 22 33], got %#v", got)
+	}
+
+	mu.Lock()
+	gotSeen := append([]string(nil), seen...)
+	mu.Unlock()
+
+	if len(gotSeen) != 2 || gotSeen[0] != "11" || gotSeen[1] != "22" {
+		t.Fatalf("expected brute order [11 22], got %#v", gotSeen)
+	}
+}
+
 func TestStopIfMatchSkipsFollowingRules(t *testing.T) {
 	retryhttpclient.Init(&retryhttpclient.Options{
 		Proxy:           "",

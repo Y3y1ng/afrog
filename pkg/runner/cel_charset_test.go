@@ -75,6 +75,40 @@ func TestCELBSubmatchBytesGBK(t *testing.T) {
 	}
 }
 
+func TestCELSubmatchAllAndMapListAccess(t *testing.T) {
+	body := []byte(`{"id":"11","id":"22","id":"33"}`)
+
+	lib := NewCustomLib()
+	lib.UpdateCompileOption("body", decls.Bytes)
+
+	out, err := lib.RunEval(`"\"id\":\"(?P<tid>[0-9]+)\"".bsubmatchall(body)`, map[string]any{
+		"body": body,
+	})
+	if err != nil {
+		t.Fatalf("eval bsubmatchall error: %v", err)
+	}
+
+	ids, ok := celStringStringSliceMap(out)
+	if !ok {
+		t.Fatalf("unexpected result type: %T(%v)", out.Value(), out.Value())
+	}
+	got := ids["tid"]
+	if len(got) != 3 || got[0] != "11" || got[1] != "22" || got[2] != "33" {
+		t.Fatalf("expected [11 22 33], got %#v", got)
+	}
+
+	lib.UpdateCompileOption("ids", StrStrListMapType)
+	out2, err := lib.RunEval(`ids["tid"][1]`, map[string]any{
+		"ids": ids,
+	})
+	if err != nil {
+		t.Fatalf("eval list access error: %v", err)
+	}
+	if got2, ok := out2.Value().(string); !ok || got2 != "22" {
+		t.Fatalf("expected ids[\"tid\"][1]=22, got %T(%v)", out2.Value(), out2.Value())
+	}
+}
+
 func TestCELRegexCount(t *testing.T) {
 	html := "<title>a</title>\n<title>b</title>\n"
 	body := []byte(html)

@@ -256,8 +256,8 @@ rules:
 Afrog 使用 CEL（Common Expression Language）表达式。
 常用对象与函数：
 - `response.status`, `response.body`, `response_text`, `response.headers`, `response.content_type`, `response.raw_header`, `response.latency`
-- 文本匹配（推荐）：`contains`/`icontains`/`matches`/`rmatches`/`submatch`
-- 字节匹配：`bcontains`/`ibcontains`/`bmatches`/`bsubmatch` 等
+- 文本匹配（推荐）：`contains`/`icontains`/`matches`/`rmatches`/`submatch`/`submatchall`
+- 字节匹配：`bcontains`/`ibcontains`/`bmatches`/`bsubmatch`/`bsubmatchall` 等
 
 最常见的迁移（解决“中文乱码/编码不一致导致提取失败”）：
 
@@ -346,6 +346,36 @@ rules:
         Cookie: "{{web_cookie['webcookie']}}"
     expression: response.status == 200 && response_text.icontains("admin")
 ```
+
+动态多值提取并遍历验证（推荐搭配 `brute`）：
+```yaml
+rules:
+  r0:
+    request:
+      method: GET
+      path: /api/templates
+    expression: response.status == 200
+    output:
+      id_matches: '"\"id\":\"(?P<tid>[0-9]+)\"".bsubmatchall(response.body)'
+
+  r1:
+    brute:
+      mode: clusterbomb
+      commit: winner
+      continue: false
+      template_id: id_matches["tid"]
+    request:
+      method: GET
+      path: /api/check?id={{template_id}}
+    expression: response.status == 200 && response_text.icontains("success")
+expression: r0() && r1()
+```
+
+说明：
+- `bsubmatchall/submatchall` 会返回 `map[string][]string`
+- `id_matches["tid"]` 的结果是一个字符串列表
+- `brute` 现在既支持 YAML 里直接写死的列表，也支持引用上一步动态提取出来的列表
+- 如果只想拿第一个值，用 `submatch/bsubmatch`；如果要遍历全部值，用 `submatchall/bsubmatchall + brute`
 
 Extractors 方式：
 
@@ -566,6 +596,76 @@ rules:
 
 expression: mysql()
 ```
+
+### 路径字典 Brute
+`brute` 用于让某条规则按一组候选值重复执行，常见于路径探测、用户名密码组合、动态提取 ID 后逐个验证等场景。
+
+常用字段：
+- `mode`：迭代模式，支持 `clusterbomb` 和 `pitchfork`
+- `commit`：命中后变量如何保留，常用值有 `winner`、`first`、`last`、`none`
+- `continue`：命中后是否继续遍历，`false` 表示命中即停，`true` 表示继续跑完整个列表
+
+`commit` 取值说明：
+- `winner`：保留第一组命中的变量、请求和响应。如果后面继续命中，最终仍保留第一次命中的结果
+- `first`：当前实现与 `winner` 等价，也就是保留第一组命中的结果
+- `last`：如果存在多次命中，保留最后一次命中的变量、请求和响应
+- `none`：不保留 brute 变量本身，但保留命中的请求和响应，适合“只关心是否命中，不想把枚举值带到后续规则”的场景
+
+`commit` 与 `continue` 组合理解：
+- `commit: winner/first` + `continue: false`：命中即停，保留当前这次命中结果
+- `commit: winner/first` + `continue: true`：继续遍历，但最终保留第一次命中结果
+- `commit: last` + `continue: true`：继续遍历，最终保留最后一次命中结果
+- `commit: none`：无论是否继续遍历，都不会把 brute 变量提交到全局变量里
+
+静态列表示例：
+```yaml
+rules:
+  r0:
+    brute:
+      mode: clusterbomb
+      commit: winner
+      continue: false
+      user:
+        - admin
+        - test
+        - guest
+    request:
+      method: GET
+      path: /?user={{user}}
+    expression: response.status == 200 && response_text.icontains("welcome")
+expression: r0()
+```
+
+动态列表示例（配合 `output`）：
+```yaml
+rules:
+  r0:
+    request:
+      method: GET
+      path: /api/templates
+    expression: response.status == 200
+    output:
+      id_matches: '"\"id\":\"(?P<tid>[0-9]+)\"".bsubmatchall(response.body)'
+
+  r1:
+    brute:
+      mode: clusterbomb
+      commit: winner
+      continue: false
+      template_id: id_matches["tid"]
+    request:
+      method: GET
+      path: /api/check?id={{template_id}}
+    expression: response.status == 200 && response_text.icontains("success")
+expression: r0() && r1()
+```
+
+说明：
+- 旧用法仍然有效：`brute` 依然支持 YAML 里直接写死列表
+- 新增能力：`brute` 也支持引用运行期表达式结果，只要最终能求值为字符串列表即可
+- `clusterbomb` 适合笛卡尔积遍历，`pitchfork` 适合按索引一一配对遍历
+- `winner` 和 `first` 目前是同义配置
+- 如果只需要单个值，不必使用 `brute`
 
 ---
 

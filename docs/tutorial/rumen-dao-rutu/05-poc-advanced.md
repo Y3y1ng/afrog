@@ -89,6 +89,77 @@ expression: get_session() && exploit() # 按顺序执行
 
 ---
 
+## 🧭 Brute：让一条规则按列表重复执行
+
+`brute` 适合这几类场景：
+- 路径字典探测
+- 用户名/密码组合验证
+- 从上一步响应里提取多个候选值，再逐个继续验证
+
+`commit` 的含义要特别注意：
+- `winner`：保留第一组命中的变量、请求和响应
+- `first`：当前实现与 `winner` 等价，可以理解为第一组命中优先
+- `last`：如果后面还有命中，就用最后一次命中的结果覆盖前面的结果
+- `none`：不保留 brute 变量本身，但保留命中的请求和响应
+
+和 `continue` 组合起来看就更直观：
+- `continue: false`：一旦命中就停止
+- `continue: true`：继续把列表跑完，再按 `commit` 决定最终保留哪次命中结果
+
+静态列表示例：
+
+```yaml
+rules:
+  r0:
+    brute:
+      mode: clusterbomb
+      commit: winner
+      continue: false
+      user:
+        - admin
+        - test
+        - guest
+    request:
+      method: GET
+      path: /?user={{user}}
+    expression: response.status == 200 && response_text.icontains("welcome")
+expression: r0()
+```
+
+动态列表示例：
+
+```yaml
+rules:
+  r0:
+    request:
+      method: GET
+      path: /api/templates
+    expression: response.status == 200
+    output:
+      id_matches: '"\"id\":\"(?P<tid>[0-9]+)\"".bsubmatchall(response.body)'
+
+  r1:
+    brute:
+      mode: clusterbomb
+      commit: winner
+      continue: false
+      template_id: id_matches["tid"]
+    request:
+      method: GET
+      path: /api/check?id={{template_id}}
+    expression: response.status == 200 && response_text.icontains("success")
+expression: r0() && r1()
+```
+
+要点：
+- `brute` 以前就支持静态列表，现在还支持引用运行期动态生成的列表
+- `commit: winner` 表示保留命中的那组变量
+- `winner` 和 `first` 目前是同义配置
+- `continue: false` 表示命中后立即停止，适合验证型 PoC
+- 如果你用的是中文页面，提取时优先考虑 `submatchall(response_text)`
+
+---
+
 ## 📡 反连检测 (OOB)：看不见的也能抓
 
 对于 Log4j2 这种无回显漏洞，我们需要用到 OOB。

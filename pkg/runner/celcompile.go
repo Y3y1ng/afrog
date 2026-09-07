@@ -9,8 +9,10 @@ import (
 )
 
 var (
-	StrStrMapType = decls.NewMapType(decls.String, decls.String)
-	NewEnvOptions = []cel.EnvOption{
+	StrListType       = decls.NewListType(decls.String)
+	StrStrMapType     = decls.NewMapType(decls.String, decls.String)
+	StrStrListMapType = decls.NewMapType(decls.String, StrListType)
+	NewEnvOptions     = []cel.EnvOption{
 		cel.Container("proto"),
 		cel.Types(
 			&proto.UrlType{},
@@ -18,7 +20,9 @@ var (
 			&proto.Response{},
 			&proto.Reverse{},
 			&proto.OOB{},
+			StrListType,
 			StrStrMapType,
+			StrStrListMapType,
 		),
 		cel.Declarations(
 			decls.NewVar("request", decls.NewObjectType("proto.Request")),
@@ -198,10 +202,20 @@ var (
 					[]*exprpb.Type{decls.String, decls.String},
 					StrStrMapType,
 				)),
+			decls.NewFunction("submatchall",
+				decls.NewInstanceOverload("string_submatchall_string",
+					[]*exprpb.Type{decls.String, decls.String},
+					StrStrListMapType,
+				)),
 			decls.NewFunction("bsubmatch",
 				decls.NewInstanceOverload("string_bsubmatch_bytes",
 					[]*exprpb.Type{decls.String, decls.Bytes},
 					StrStrMapType,
+				)),
+			decls.NewFunction("bsubmatchall",
+				decls.NewInstanceOverload("string_bsubmatchall_bytes",
+					[]*exprpb.Type{decls.String, decls.Bytes},
+					StrStrListMapType,
 				)),
 			decls.NewFunction("bmatches",
 				decls.NewInstanceOverload("string_bmatches_bytes",

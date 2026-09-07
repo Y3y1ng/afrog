@@ -403,8 +403,12 @@ func (c *CustomLib) WriteRuleSetOptions(args yaml.MapSlice) {
 			} else {
 				t = decls.String
 			}
+		case []string:
+			t = StrListType
 		case map[string]string:
 			t = StrStrMapType
+		case map[string][]string:
+			t = StrStrListMapType
 		default:
 			t = decls.String
 		}

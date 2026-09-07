@@ -700,6 +700,56 @@ rules:
 expression: r0()
 ```
 
+### bsubmatchall
+
+正则表达式处理中的一个函数，用于提取所有匹配到的命名分组内容。
+
+返回值：`map[string][]string`
+
+常见使用场景：
+
+- 响应里存在多个相同字段（如多个 `id`、`token`、`name`），需要全部提取出来
+- 配合 `brute` 遍历动态提取到的列表，对每个候选值继续验证
+
+示例：
+
+```yaml
+id: bsubmatchall-demo
+
+info:
+  name: Regex bsubmatchall Demo
+  author: zan8in
+  severity: info
+
+rules:
+  r0:
+    request:
+      method: GET
+      path: /api/templates
+    expression: response.status == 200
+    output:
+      id_matches: '"\"id\":\"(?P<tid>[0-9]+)\"".bsubmatchall(response.body)'
+
+  r1:
+    brute:
+      mode: clusterbomb
+      commit: winner
+      continue: false
+      template_id: id_matches["tid"]
+    request:
+      method: GET
+      path: /api/check?id={{template_id}}
+    expression: response.status == 200 && response_text.icontains("success")
+expression: r0() && r1()
+```
+
+说明：
+
+- `id_matches` 的类型是 `map[string][]string`
+- `id_matches["tid"]` 返回一个列表，例如 `["11", "22", "33"]`
+- 如果只需要第一个匹配值，还是用 `bsubmatch`
+- 如果响应体是中文或带 `charset=`，更推荐用 `submatchall(response_text)`
+
 r0 请求
 
 ```
