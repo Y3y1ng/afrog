@@ -28,6 +28,20 @@ import (
 	"github.com/zan8in/gologger"
 )
 
+func shouldReportFingerprintHit(options *config.Options, severity string) bool {
+	if options == nil || strings.TrimSpace(options.Severity) == "" {
+		return true
+	}
+
+	severity = strings.ToLower(strings.TrimSpace(severity))
+	for _, item := range strings.Split(options.Severity, ",") {
+		if strings.EqualFold(severity, strings.TrimSpace(item)) {
+			return true
+		}
+	}
+	return false
+}
+
 func main() {
 
 	options, err := config.NewOptions()
@@ -275,6 +289,9 @@ func main() {
 			sev := strings.TrimSpace(hit.Severity)
 			if sev == "" {
 				sev = "info"
+			}
+			if !shouldReportFingerprintHit(options, sev) {
+				continue
 			}
 			name := strings.TrimSpace(hit.Name)
 			if name == "" {

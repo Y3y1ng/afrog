@@ -262,6 +262,22 @@ func (s *Scanner) installRunnerHooks() {
 	s.runner.OnFingerprint = s.handleFingerprint
 }
 
+func (s *Scanner) shouldReportSeverity(severity string) bool {
+	if s == nil || strings.TrimSpace(s.opts.Severity) == "" {
+		return true
+	}
+	severity = strings.ToLower(strings.TrimSpace(severity))
+	if severity == "" {
+		severity = "info"
+	}
+	for _, item := range strings.Split(s.opts.Severity, ",") {
+		if strings.EqualFold(severity, strings.TrimSpace(item)) {
+			return true
+		}
+	}
+	return false
+}
+
 // handleResult receives every executed task, whether it matched or not.
 func (s *Scanner) handleResult(r *result.Result) {
 	if r == nil || !r.SkipCount {
@@ -310,6 +326,9 @@ func (s *Scanner) handleFingerprint(targetKey string, hits []fingerprint.Hit) {
 		severity := strings.TrimSpace(hit.Severity)
 		if severity == "" {
 			severity = "info"
+		}
+		if !s.shouldReportSeverity(severity) {
+			continue
 		}
 		name := strings.TrimSpace(hit.Name)
 		if name == "" {

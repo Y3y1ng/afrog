@@ -5,6 +5,9 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/zan8in/afrog/v3/pkg/fingerprint"
+	"github.com/zan8in/afrog/v3/pkg/result"
 )
 
 // Every option has to actually change the configuration. A typo in one of the
@@ -341,5 +344,41 @@ func TestScanner_FingerprintHitsBecomeResults(t *testing.T) {
 	scanner.handleFingerprint("key", nil)
 	if got := scanner.ResultCount(); got != 0 {
 		t.Fatalf("an empty hit list produced %d results", got)
+	}
+}
+
+func TestScanner_FingerprintHitsRespectSeverityFilter(t *testing.T) {
+	var rawCalls int
+	scanner, _ := newTestScanner(t,
+		WithRawResultHandler(func(*result.Result) {
+			rawCalls++
+		}),
+	)
+	scanner.opts.Severity = "high"
+
+	scanner.handleFingerprint("key", []fingerprint.Hit{{
+		ID:       "nacos-detect",
+		Name:     "Nacos Detect",
+		Severity: "info",
+		Tags:     "nacos,panel,fingerprint",
+	}})
+	if got := scanner.ResultCount(); got != 0 {
+		t.Fatalf("info fingerprint under high filter produced %d results", got)
+	}
+	if rawCalls != 0 {
+		t.Fatalf("raw result handler called %d times, want 0", rawCalls)
+	}
+
+	scanner.handleFingerprint("key", []fingerprint.Hit{{
+		ID:       "nacos-high",
+		Name:     "Nacos High",
+		Severity: "high",
+		Tags:     "nacos,panel,fingerprint",
+	}})
+	if got := scanner.ResultCount(); got != 1 {
+		t.Fatalf("high fingerprint under high filter produced %d results, want 1", got)
+	}
+	if rawCalls != 1 {
+		t.Fatalf("raw result handler called %d times, want 1", rawCalls)
 	}
 }

@@ -47,12 +47,12 @@ type ScanEvent struct {
 // handler goroutines and from the event-drain goroutine at the same time, so
 // they are reached only through the accessors below.
 type Task struct {
-	ID            string
-	Name          string
-	CreatedAt     time.Time
-	Scanner       *sdk.Scanner
-	SeverityStats map[string]int
-	Subscribers   map[chan ScanEvent]struct{}
+	ID             string
+	Name           string
+	CreatedAt      time.Time
+	Scanner        *sdk.Scanner
+	SeverityStats  map[string]int
+	Subscribers    map[chan ScanEvent]struct{}
 
 	mu        sync.Mutex
 	status    TaskStatus
