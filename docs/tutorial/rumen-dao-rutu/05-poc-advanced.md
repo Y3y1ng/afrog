@@ -102,6 +102,24 @@ expression: get_session() && exploit() # 按顺序执行
 - `last`：如果后面还有命中，就用最后一次命中的结果覆盖前面的结果
 - `none`：不保留 brute 变量本身，但保留命中的请求和响应
 
+如果你只写 payload 变量，没有显式写 `mode`、`commit`、`continue`，默认等价于：
+
+```yaml
+brute:
+  mode: clusterbomb
+  commit: winner
+  continue: false
+  p:
+    - /
+    - /jeecg-boot
+```
+
+也就是说：
+- 默认按 `clusterbomb` 方式遍历
+- 默认保留第一组命中的结果
+- 默认命中即停
+- 如果只有一个变量，实际就是按列表顺序逐个执行
+
 和 `continue` 组合起来看就更直观：
 - `continue: false`：一旦命中就停止
 - `continue: true`：继续把列表跑完，再按 `commit` 决定最终保留哪次命中结果

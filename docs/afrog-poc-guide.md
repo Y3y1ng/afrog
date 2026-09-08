@@ -605,6 +605,25 @@ expression: mysql()
 - `commit`：命中后变量如何保留，常用值有 `winner`、`first`、`last`、`none`
 - `continue`：命中后是否继续遍历，`false` 表示命中即停，`true` 表示继续跑完整个列表
 
+最小写法的默认值：
+如果你只写 payload 变量，没有显式写 `mode`、`commit`、`continue`，默认等价于：
+
+```yaml
+brute:
+  mode: clusterbomb
+  commit: winner
+  continue: false
+  p:
+    - /
+    - /jeecg-boot
+```
+
+这表示：
+- 默认按 `clusterbomb` 方式遍历
+- 命中后保留第一组命中的变量、请求和响应
+- 默认命中即停，不再继续尝试后续 payload
+- 如果只有一个变量，例如 `p`，实际效果就是按列表顺序一个个执行
+
 `commit` 取值说明：
 - `winner`：保留第一组命中的变量、请求和响应。如果后面继续命中，最终仍保留第一次命中的结果
 - `first`：当前实现与 `winner` 等价，也就是保留第一组命中的结果
